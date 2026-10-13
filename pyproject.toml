@@ -1,0 +1,25 @@
+[project]
+name = "terraform-gcp-data-pipeline"
+version = "0.1.0"
+description = "Reproducible public-market data pipeline: Python ingestion, DuckDB local warehouse, Terraform-provisioned GCS + BigQuery"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "PL", "RET", "ARG"]
+ignore = [
+    "PLR0913", # argument count: the ingest entry point legitimately takes several
+    "PLR2004", # magic values are fine in assertions
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately import inside a test body to scope a symbol to one case.
+"tests/*" = ["ARG001", "ARG002", "PLR2004", "ARG005", "PLC0415"]

@@ -1,0 +1,61 @@
+# ---- Credentials and configuration (never commit) --------------------------
+.env
+.env.*
+!.env.example
+*.json.key
+service-account*.json
+credentials*.json
+gcp-key*.json
+application_default_credentials.json
+
+# ---- Terraform --------------------------------------------------------------
+# State contains every resource attribute and must never be committed.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+# Real variable values; the .example file is committed instead.
+terraform.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+tfplan
+*.tfplan
+
+# ---- Pipeline data (regenerated; do not version) ----------------------------
+# Downloaded feeds, generated Parquet, the DuckDB file and local watermarks.
+# Test fixtures live under tests/fixtures/ and ARE committed.
+data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# ---- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ---- Editors and OS ---------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+.DS_Store
