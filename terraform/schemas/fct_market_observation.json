@@ -1,0 +1,58 @@
+[
+  {
+    "name": "observation_key",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "SHA-256 of series_id|metric_name|observation_date. Deterministic business key; the MERGE matches on this."
+  },
+  {
+    "name": "series_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Logical series, e.g. SP500_COMPOSITE or CBOE_VIX. Clustering key."
+  },
+  {
+    "name": "metric_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Measure within the series, e.g. close, index_level, cpi. Clustering key."
+  },
+  {
+    "name": "observation_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the value refers to. Month-granularity feeds are normalized to the first of the month. Partitioning column."
+  },
+  {
+    "name": "metric_value",
+    "type": "NUMERIC",
+    "precision": "20",
+    "scale": "6",
+    "mode": "REQUIRED",
+    "description": "Observed value. NUMERIC rather than FLOAT64 to avoid binary float drift on monetary and index values."
+  },
+  {
+    "name": "source_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Upstream feed that produced the row, for lineage."
+  },
+  {
+    "name": "batch_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Ingestion batch that last wrote this row."
+  },
+  {
+    "name": "ingested_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the batch that last wrote this row was ingested."
+  },
+  {
+    "name": "updated_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When this row was last inserted or changed. Unchanged by a no-op rerun."
+  }
+]

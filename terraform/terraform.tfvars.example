@@ -1,0 +1,31 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+project_id = "my-gcp-project-id"
+region     = "us-central1"
+
+environment = "dev"
+
+# Leave bucket_name empty to get "<name_prefix>-raw-<environment>-<project_id>",
+# which is globally unique without you having to think about it.
+# bucket_name = ""
+
+dataset_id  = "market_analytics"
+bq_location = "US"
+
+# Delete raw Parquet after this many days. It is reproducible from the upstream
+# feed, so a short window is usually right. Set 0 to keep objects forever.
+raw_retention_days = 90
+
+# Set false if the APIs are already on, or you lack serviceusage permission.
+enable_apis = true
+
+# Allow your own account to impersonate the pipeline service account instead of
+# downloading a key. Replace with your email.
+# pipeline_runner_members = ["user:you@example.com"]
+
+# Teardown switches. Both must be relaxed before `terraform destroy` will
+# remove tables and a non-empty bucket - see README "Teardown".
+# table_deletion_protection = false
+# bucket_force_destroy      = true

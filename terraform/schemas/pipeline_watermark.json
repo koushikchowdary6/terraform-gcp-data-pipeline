@@ -1,0 +1,20 @@
+[
+  {
+    "name": "source_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Source feed name, matching pipeline/sources.py."
+  },
+  {
+    "name": "max_observation_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Highest observation_date successfully merged for this source."
+  },
+  {
+    "name": "updated_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the watermark was last advanced."
+  }
+]
