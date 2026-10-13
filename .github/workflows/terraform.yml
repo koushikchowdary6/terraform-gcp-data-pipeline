@@ -1,0 +1,66 @@
+name: terraform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only. `terraform validate` needs the provider schema but no credentials,
+# and no job here can reach a GCP project or create a resource.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: terraform
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (no backend, no credentials)
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate -no-color
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: tflint
+        run: tflint --no-color
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install checkov
+        run: pip install checkov==3.3.29
+
+      - name: checkov
+        # Findings that are deliberately accepted carry an inline
+        # `checkov:skip=<id>:<reason>` comment in the Terraform, so this job
+        # fails on anything new and unreviewed.
+        run: checkov --directory . --framework terraform --compact --quiet

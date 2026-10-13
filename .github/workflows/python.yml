@@ -1,0 +1,92 @@
+name: python
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# No cloud credentials are used anywhere in this workflow. Every job runs
+# offline against committed fixtures, so a pull request from a fork is safe.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor declared in pyproject.toml; 3.12 is the version
+        # used for development. Both are tested so the floor stays honest.
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -v
+
+  pipeline-smoke-test:
+    # Proves the CLI actually runs, not just that units pass: ingest fixture
+    # data, build the DuckDB warehouse, then run again and assert the fact
+    # table did not grow.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Seed fixture data as source files
+        run: |
+          mkdir -p data/raw
+          cp tests/fixtures/vix_clean.csv data/raw/vix_daily.csv
+
+      - name: First run
+        run: python -m pipeline.cli run-local --sources vix_daily --offline
+
+      - name: Second run must be idempotent
+        run: |
+          python -m pipeline.cli run-local --sources vix_daily --offline
+          python - <<'PY'
+          from pipeline.warehouse import LocalWarehouse
+          with LocalWarehouse("data/local/warehouse.duckdb") as wh:
+              rows = wh.fact_row_count()
+          print(f"fact rows after two runs: {rows}")
+          assert rows == 20, f"expected 20 rows after two runs, found {rows}"
+          PY
+
+      - name: Data-quality checks must pass
+        run: python -m pipeline.cli quality
