@@ -51,6 +51,26 @@ before treating the configuration as schema-valid.**
 OpenTofu was used because it is a drop-in fork of Terraform that reads the same
 HCL; the Terraform binary itself could not be downloaded here.
 
+## A real bug these tests caught
+
+`pipeline/quality.py` logged with `extra={"message": ...}`. `message` is a
+reserved `LogRecord` attribute, so `logging.Logger.makeRecord` raises
+`KeyError: "Attempt to overwrite 'message' in LogRecord"`. The line meant to
+emit a warning would instead have crashed the run — precisely in the situation
+where someone had configured quality failures to be warnings rather than
+errors.
+
+Worse, it was **masked by test ordering**. `test_cli.py` runs before
+`test_quality.py` alphabetically and calls `configure_logging("ERROR")`, which
+leaves the root logger above `WARNING`. The warning call was therefore skipped
+entirely and the suite stayed green. It only surfaced when the same bug was
+written again in the companion `airflow-postgres-etl` project, where the test
+ordering happened to be different.
+
+Both projects are fixed, and the test now wraps the call in
+`caplog.at_level(logging.WARNING)` so the branch is forced to execute no matter
+what log level other tests leave behind.
+
 ## Test suite
 
 ```

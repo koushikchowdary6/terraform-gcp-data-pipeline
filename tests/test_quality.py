@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from pipeline.quality import QualityCheckFailed, enforce, failures, format_table, run_local_checks
@@ -100,9 +102,16 @@ class TestEnforcement:
         assert "fact_table_not_empty" in message
         assert "04_quality.sql" in message  # tells the reader where to look
 
-    def test_failures_can_be_downgraded_to_warnings(self, loaded_warehouse: LocalWarehouse):
+    def test_failures_can_be_downgraded_to_warnings(self, loaded_warehouse: LocalWarehouse, caplog):
         loaded_warehouse.connection.execute("DELETE FROM analytics.fct_market_observation")
-        enforce(run_local_checks(loaded_warehouse), fail_on_error=False)  # must not raise
+        checks = run_local_checks(loaded_warehouse)
+        # caplog.at_level forces the warning branch to actually execute. Without
+        # it, any test that raised the root log level earlier in the session
+        # would make this call a no-op and hide a crash inside it - which is
+        # exactly how a real bug in this branch went unnoticed once.
+        with caplog.at_level(logging.WARNING):
+            enforce(checks, fail_on_error=False)  # must not raise
+        assert "configured as warnings" in caplog.text
 
 
 class TestReporting:

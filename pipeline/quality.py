@@ -68,7 +68,14 @@ def enforce(checks: list[QualityCheck], *, fail_on_error: bool = True) -> None:
     )
     if fail_on_error:
         raise QualityCheckFailed(message)
-    logger.warning("quality checks failed but failures are configured as warnings", extra={"message": message})
+    # NOTE: the key here must not collide with a LogRecord attribute.
+    # logging.Logger.makeRecord raises KeyError if `extra` contains a reserved
+    # name such as "message", "module" or "filename", which turns a log line
+    # into a crash. Using "message" here was a real bug caught by the tests.
+    logger.warning(
+        "quality checks failed but failures are configured as warnings",
+        extra={"failure_count": len(bad), "failed_checks": detail},
+    )
 
 
 def format_table(checks: list[QualityCheck]) -> str:
