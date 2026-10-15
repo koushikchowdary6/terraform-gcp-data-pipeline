@@ -52,8 +52,13 @@ variable "dataset_id" {
   default     = "market_analytics"
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9_]{1,1024}$", var.dataset_id))
-    error_message = "dataset_id may contain only letters, digits and underscores."
+    # Length is checked separately rather than as a regex bound: Go's RE2
+    # engine caps bounded repetition at 1000, so "{1,1024}" is an *invalid*
+    # regex. can() would swallow that error and return false, making this rule
+    # fail for every input. CI caught it; `terraform fmt` and tflint cannot,
+    # because neither evaluates validation rules.
+    condition     = can(regex("^[a-zA-Z0-9_]+$", var.dataset_id)) && length(var.dataset_id) <= 1024
+    error_message = "dataset_id may contain only letters, digits and underscores, and be at most 1024 characters."
   }
 }
 
