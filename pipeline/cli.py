@@ -24,7 +24,7 @@ from .logging_setup import configure_logging, get_logger
 from .quality import QualityCheckFailed, enforce, format_table, run_local_checks
 from .sources import SOURCES, get_source
 from .sql_files import duckdb_sql, split_statements
-from .state import WatermarkStore, effective_floor
+from .state import WatermarkStore, effective_floor, mark_delivered, pending_batches
 from .warehouse import LocalWarehouse
 
 logger = get_logger(__name__)
@@ -179,44 +179,71 @@ def cmd_examples(_: argparse.Namespace) -> int:
 
 
 def cmd_run_cloud(args: argparse.Namespace) -> int:
-    """Upload the newest local batch to GCS, then load, merge and verify in BigQuery."""
+    """Deliver every not-yet-delivered local batch to GCS and BigQuery.
+
+    Delivery is tracked per batch rather than inferred from the watermark.
+    The local watermark advances as soon as a batch passes its *local* checks,
+    so using it to decide what the cloud already holds would silently skip any
+    batch whose upload failed: the next run would produce a batch of only newer
+    rows, and the failed one would never be retried. Processing every pending
+    batch in order makes a failed delivery self-healing on the next run.
+    """
     from .bq import BigQueryWarehouse  # noqa: PLC0415 - lazy: cloud deps optional
     from .gcs import gcs_uri, raw_object_name, upload_file  # noqa: PLC0415
 
     cfg = Config.from_env()
     project_id, bucket = cfg.require_gcp()
 
-    batches = sorted(cfg.processed_dir.glob("batch=*"))
-    if not batches:
-        raise FileNotFoundError(
-            f"No local batches found under {cfg.processed_dir}. Run 'python -m pipeline.cli run-local' first."
-        )
-    batch_dir = batches[-1]
-    batch_id = batch_dir.name.removeprefix("batch=")
-    print(f"Using batch {batch_id} from {batch_dir}")
+    pending = pending_batches(cfg.processed_dir)
+    if not pending:
+        print(f"Nothing to deliver: every batch under {cfg.processed_dir} is already marked delivered.")
+        return 0
 
-    uris = []
-    for parquet_path in sorted(batch_dir.glob("*.parquet")):
-        source_name = parquet_path.stem
-        object_name = raw_object_name(source_name, batch_id)
-        if args.skip_upload:
-            uris.append(gcs_uri(bucket, object_name))
-        else:
-            uris.append(upload_file(bucket, parquet_path, object_name, project_id=project_id))
+    print(f"{len(pending)} batch(es) pending delivery:")
+    for batch_dir in pending:
+        print(f"  {batch_dir.name}")
 
     warehouse = BigQueryWarehouse(project_id, cfg.bq_dataset, cfg.bq_location)
-    staged = warehouse.load_staging_from_gcs(uris)
-    affected = warehouse.merge()
-    warehouse.build_analytics()
-    checks = warehouse.run_quality()
-    print("\n=== BigQuery data-quality checks ===")
-    print(format_table(checks))
-    enforce(checks, fail_on_error=cfg.fail_on_quality_error)
+    delivered = 0
 
-    print("\n=== BigQuery run summary ===")
-    print(f"staged rows        : {staged}")
-    print(f"merge rows affected: {affected}")
+    # Oldest first, so the warehouse receives batches in the order they were
+    # produced and a mid-sequence failure leaves the rest pending.
+    for batch_dir in pending:
+        batch_id = batch_dir.name.removeprefix("batch=")
+        print(f"\n=== delivering {batch_id} ===")
 
+        uris = []
+        for parquet_path in sorted(batch_dir.glob("*.parquet")):
+            source_name = parquet_path.stem
+            object_name = raw_object_name(source_name, batch_id)
+            if args.skip_upload:
+                uris.append(gcs_uri(bucket, object_name))
+            else:
+                uris.append(upload_file(bucket, parquet_path, object_name, project_id=project_id))
+
+        if not uris:
+            logger.warning("batch has no parquet files; marking delivered", extra={"batch_id": batch_id})
+            mark_delivered(batch_dir, batch_id=batch_id, rows_staged=0, note="no parquet files")
+            delivered += 1
+            continue
+
+        staged = warehouse.load_staging_from_gcs(uris)
+        affected = warehouse.merge()
+        warehouse.build_analytics()
+        checks = warehouse.run_quality()
+        print(format_table(checks))
+        # Raises on failure, so the marker below is never written for a batch
+        # that did not verify - it stays pending and is retried next run.
+        enforce(checks, fail_on_error=cfg.fail_on_quality_error)
+
+        mark_delivered(batch_dir, batch_id=batch_id, rows_staged=staged, merge_rows_affected=affected)
+        delivered += 1
+        print(f"  staged {staged}, merge affected {affected} -> marked delivered")
+
+    print(f"\n=== delivered {delivered}/{len(pending)} pending batch(es) ===")
+
+    # The BigQuery watermark reflects what the cloud warehouse actually holds,
+    # and is only written once every pending batch has been delivered.
     store = WatermarkStore(cfg.state_path)
     for name, value in store.all().items():
         warehouse.set_watermark(name, date.fromisoformat(value))

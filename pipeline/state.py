@@ -13,8 +13,12 @@ on the deterministic observation key.
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+
+# Written into a batch directory once that batch has been loaded into the
+# cloud warehouse AND passed its quality checks there.
+DELIVERED_MARKER = "_delivered.json"
 
 
 class WatermarkStore:
@@ -74,3 +78,41 @@ def effective_floor(watermark: date | None, lookback_days: int) -> date | None:
     if lookback_days < 0:
         raise ValueError("lookback_days must be >= 0")
     return watermark - timedelta(days=lookback_days)
+
+
+# ---------------------------------------------------------------- delivery state
+#
+# The local watermark advances once a batch is verified *locally*. That alone is
+# not enough to decide what the cloud warehouse already holds: a batch can be
+# produced and locally verified, then fail to upload. Because the watermark has
+# already moved, the next run produces a batch containing only newer rows - so
+# uploading "the latest batch" would silently skip the failed one forever.
+#
+# Delivery is therefore tracked per batch, independently of the watermark.
+
+
+def batch_dirs(processed_dir: Path) -> list[Path]:
+    """Every batch directory, oldest first.
+
+    Batch ids start with a UTC timestamp, so lexical order is chronological.
+    """
+    return sorted((p for p in Path(processed_dir).glob("batch=*") if p.is_dir()), key=lambda p: p.name)
+
+
+def is_delivered(batch_dir: Path) -> bool:
+    return (Path(batch_dir) / DELIVERED_MARKER).exists()
+
+
+def pending_batches(processed_dir: Path) -> list[Path]:
+    """Batches not yet confirmed delivered to the cloud warehouse, oldest first."""
+    return [d for d in batch_dirs(processed_dir) if not is_delivered(d)]
+
+
+def mark_delivered(batch_dir: Path, **details: object) -> Path:
+    """Record that a batch reached the cloud warehouse and passed its checks."""
+    path = Path(batch_dir) / DELIVERED_MARKER
+    payload = {"delivered_at": datetime.now(tz=UTC).isoformat(), **details}
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
