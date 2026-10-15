@@ -18,7 +18,7 @@ not run in this environment, it says so explicitly rather than being omitted.
 | Local pipeline, real data | DuckDB | **53,513 observations loaded** |
 | Idempotency, incremental rerun | DuckDB | **0 rows inserted, count unchanged** |
 | Idempotency, full re-process | DuckDB | **0 rows inserted, count unchanged** |
-| `terraform validate` | Terraform CLI | **not run locally** — see below |
+| `terraform validate` | Terraform CLI | **not run locally** (see below); **passes in CI** |
 | GCP deployment | — | **not performed** — no credentials, no approval |
 | BigQuery SQL execution | — | **not executed** — requires a GCP project |
 
@@ -236,7 +236,11 @@ fact row count        : 53513          <- unchanged
    unproven against the real engine.
 3. **`terraform validate` and `terraform plan` have not run** against the
    provider schema locally — see the explanation above. CI runs `validate`.
-4. **GitHub Actions status is unknown at the time of writing.** The workflows
-   are committed but had not yet run.
+4. ~~GitHub Actions status is unknown.~~ **Resolved.** Both workflows now run
+   on every push and pass: `python` (lint, tests on 3.11 and 3.12, CLI smoke
+   test) and `terraform` (fmt, init, validate, tflint, checkov).
+   `terraform validate` therefore *is* verified — in CI, against the real
+   provider schema, even though it cannot run in the environment where the
+   code was written.
 5. **Scale is untested.** The largest input here is ~9,000 rows. Nothing
    establishes behaviour at millions of rows; see the README's limitations.

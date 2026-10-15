@@ -13,9 +13,9 @@ by re-processing every row and comparing a fingerprint), and **verified**
 > **Honest status.** Everything local is executed and verified. **No GCP
 > resource has been created and the BigQuery SQL has never run** — no
 > credentials were configured and no deployment was approved. The Terraform is
-> formatted, linted and security-scanned, but `terraform validate` runs in CI
-> rather than locally, because the provider registry was unreachable in the
-> environment where it was written. [`docs/VERIFICATION.md`](docs/VERIFICATION.md)
+> formatted, linted and security-scanned, and `terraform validate` **passes in
+> CI** against the real provider schema — it could not run locally because the
+> provider registry was unreachable where the code was written. [`docs/VERIFICATION.md`](docs/VERIFICATION.md)
 > records exactly what ran, with output.
 
 ---
@@ -96,7 +96,7 @@ No network? Download the two CSVs listed in
 | Real data loaded | DuckDB 1.5.6 | **53,513 observations** from 11,147 source rows |
 | Data-quality checks | SQL | **8/8 pass** |
 | Re-process all rows | DuckDB | **0 inserted, fingerprint identical** |
-| `terraform validate` | Terraform | **not local** — runs in CI |
+| `terraform validate` | Terraform (CI) | **passes** |
 | GCP deployment | — | **not performed** |
 | BigQuery SQL execution | — | **never executed** |
 
@@ -286,8 +286,9 @@ Exit codes: `0` success, `1` pipeline or data-quality failure, `2` configuration
 2. **The BigQuery SQL is unproven.** It mirrors the DuckDB statements that do
    run and follows documented semantics, but MERGE behaviour and partition
    pruning have not been observed against the real engine.
-3. **`terraform validate` has not run locally** (provider registry blocked).
-   A schema-level error in a resource argument would surface only in CI.
+3. **`terraform validate` does not run locally** (provider registry blocked),
+   only in CI — where it passes. It caught a real bug the local tools could
+   not; see `docs/VERIFICATION.md`.
 4. **Single-machine, single-process.** Ingestion reads a whole CSV in one pass.
    Fine at ~10k rows; a feed in the millions wants chunked reads, and one in the
    billions wants a different tool.
