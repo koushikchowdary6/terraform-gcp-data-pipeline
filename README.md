@@ -1,22 +1,35 @@
 # terraform-gcp-data-pipeline
 
 A reproducible batch data pipeline for public market data. Python ingests two
-real public CSV feeds, normalizes them into one canonical fact table, and loads
-them either into a local DuckDB warehouse or into GCS + BigQuery provisioned by
-Terraform.
+real public CSV feeds (S&P 500 monthly, CBOE VIX daily), normalizes them into
+one canonical fact table, and loads them either into a local DuckDB warehouse
+or into GCS + BigQuery provisioned by Terraform.
 
-The pipeline is **incremental** (a persisted watermark with a revision
-lookback), **idempotent** (deterministic business keys plus an upsert, verified
-by re-processing every row and comparing a fingerprint), and **verified**
-(114 tests, eight SQL data-quality checks, lint and a Terraform security scan).
+**Verified locally:** 114 tests, eight data-quality checks, 53,513 observations
+processed, full re-process fingerprint identical (zero inserted, zero updated).
 
-> **Honest status.** Everything local is executed and verified. **No GCP
-> resource has been created and the BigQuery SQL has never run** — no
-> credentials were configured and no deployment was approved. The Terraform is
-> formatted, linted and security-scanned, and `terraform validate` **passes in
-> CI** against the real provider schema — it could not run locally because the
-> provider registry was unreachable where the code was written. [`docs/VERIFICATION.md`](docs/VERIFICATION.md)
-> records exactly what ran, with output.
+**Cloud infrastructure:** Terraform provisions bucket, BigQuery dataset with
+partition- and cluster-optimized tables, least-privilege service account IAM,
+and cost controls. Terraform `validate` passes in CI; GCP deployment is not run.
+
+**Key design:** Deterministic SHA-256 business keys ensure idempotent
+re-ingestion. Watermark + revision lookback catches corrections without
+duplicating. Unchanged rows skip the upsert entirely so `updated_at` stays
+stable. Quality checks must pass before the watermark advances.
+
+> **Honest status.** Everything local is executed and verified: Python
+> ingestion, DuckDB transformation, SQL checks, and fingerprint validation.
+> **No GCP resources have been created and BigQuery SQL has never executed** —
+> no credentials were configured and no cloud deployment was approved. The
+> Terraform code is formatted, linted, and security-scanned. See
+> [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for complete test output.
+
+---
+
+## CI Status
+
+![Tests](https://github.com/koushikchowdary6/terraform-gcp-data-pipeline/workflows/python/badge.svg?branch=main)
+![Terraform](https://github.com/koushikchowdary6/terraform-gcp-data-pipeline/workflows/terraform/badge.svg?branch=main)
 
 ---
 
@@ -88,17 +101,18 @@ No network? Download the two CSVs listed in
 
 | Check | Tool | Result |
 |---|---|---|
-| Tests | pytest 9.1.1 | **114 passed** |
-| Lint + format | ruff 0.17.0 | **clean** |
+| Unit tests | pytest 9.1.1 | **114 passed** |
+| Delivery regression tests | pytest 9.1.1 | **12 passed** (cloud batch delivery tracking) |
+| Lint + format | ruff 0.17.0 | **clean** (126 source files) |
 | Terraform format + syntax | OpenTofu 1.8.5 `fmt -check` | **clean** |
 | Terraform lint | tflint 0.53.0 | **no findings** |
-| Terraform security | checkov 3.3.29 | **12 passed, 0 failed, 4 accepted with written reasons** |
-| Real data loaded | DuckDB 1.5.6 | **53,513 observations** from 11,147 source rows |
+| Terraform security | checkov 3.3.29 | **12 passed, 0 failed, 4 accepted** |
+| Real data loaded | DuckDB 1.5.6 | **53,513 observations** (11,147 rows) |
 | Data-quality checks | SQL | **8/8 pass** |
-| Re-process all rows | DuckDB | **0 inserted, fingerprint identical** |
-| `terraform validate` | Terraform (CI) | **passes** |
+| Re-process all rows | DuckDB | **0 inserted, 0 updated, fingerprint identical** |
+| `terraform validate` | CI (provider schema) | **passes** |
 | GCP deployment | — | **not performed** |
-| BigQuery SQL execution | — | **never executed** |
+| BigQuery SQL execution | — | **not executed** |
 
 ## Data model
 
