@@ -135,10 +135,13 @@ resource "google_bigquery_table" "fct_market_observation" {
   # Partitioning on the query predicate that matters: almost every read is
   # bounded by date, and the MERGE prunes to the batch's date window.
   time_partitioning {
-    type                     = "DAY"
-    field                    = "observation_date"
-    require_partition_filter = var.require_partition_filter
+    type  = "DAY"
+    field = "observation_date"
   }
+
+  # Top-level argument: the identically named field inside time_partitioning is
+  # deprecated and scheduled for removal in a future provider major version.
+  require_partition_filter = var.require_partition_filter
 
   # Clustering keys ordered most-selective-first for the expected filters
   # (series first, then metric), which is how BigQuery prunes blocks.

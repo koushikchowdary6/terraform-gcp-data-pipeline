@@ -32,7 +32,19 @@ jobs:
         run: terraform init -backend=false -input=false
 
       - name: terraform validate
-        run: terraform validate -no-color
+        # Echo failures as workflow annotations so the exact provider error is
+        # visible in the checks API, not only buried in the raw log archive.
+        run: |
+          set +e
+          output=$(terraform validate -no-color 2>&1)
+          status=$?
+          echo "$output"
+          if [ $status -ne 0 ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done <<< "$output"
+          fi
+          exit $status
 
   lint:
     runs-on: ubuntu-latest
