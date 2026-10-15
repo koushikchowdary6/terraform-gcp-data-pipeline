@@ -73,10 +73,10 @@ class WatermarkStore:
 
 def effective_floor(watermark: date | None, lookback_days: int) -> date | None:
     """Earliest observation_date to stage, given a watermark and lookback."""
-    if watermark is None:
-        return None
     if lookback_days < 0:
         raise ValueError("lookback_days must be >= 0")
+    if watermark is None:
+        return None
     return watermark - timedelta(days=lookback_days)
 
 
