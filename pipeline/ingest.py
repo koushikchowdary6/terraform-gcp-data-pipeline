@@ -167,10 +167,7 @@ def ingest_file(
         # missing trailing fields with None. Either case corrupts the
         # observation without an explicit schema failure.
         if None in row or any(value is None for value in row.values()):
-            raise SchemaError(
-                f"{spec.name}: CSV row {row_number} has a different number "
-                "of fields than its header"
-            )
+            raise SchemaError(f"{spec.name}: CSV row {row_number} has a different number of fields than its header")
         result.rows_read += 1
 
         raw_date = row.get(spec.date_column) or ""
