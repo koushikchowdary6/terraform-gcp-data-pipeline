@@ -94,17 +94,19 @@ class TestMalformedInput:
 
         csv_path = tmp_path / "duplicate.csv"
         csv_path.write_text(
-            "DATE,OPEN,HIGH,LOW,CLOSE,CLOSE\n"
-            "1990-01-02,17,18,16,17.24,99.99\n",
+            "DATE,OPEN,HIGH,LOW,CLOSE,CLOSE\n1990-01-02,17,18,16,17.24,99.99\n",
             encoding="utf-8",
         )
         with pytest.raises(SchemaError, match="duplicate CSV column"):
             ingest_file(VIX, csv_path)
 
-    @pytest.mark.parametrize("row", [
-        "1990-01-02,17,18,16,17.24,unexpected",
-        "1990-01-02,17,18,16",
-    ])
+    @pytest.mark.parametrize(
+        "row",
+        [
+            "1990-01-02,17,18,16,17.24,unexpected",
+            "1990-01-02,17,18,16",
+        ],
+    )
     def test_ragged_csv_rows_fail_instead_of_loading_partial_data(self, tmp_path: Path, row):
         from pipeline.ingest import ingest_file
 
