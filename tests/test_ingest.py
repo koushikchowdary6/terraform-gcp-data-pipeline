@@ -89,6 +89,33 @@ class TestMalformedInput:
         with pytest.raises(SchemaError, match="CLOSE"):
             ingest_fixture(VIX, "vix_missing_column.csv")
 
+    def test_duplicate_csv_headers_do_not_silently_overwrite_metric_values(self, tmp_path: Path):
+        from pipeline.ingest import ingest_file
+
+        csv_path = tmp_path / "duplicate.csv"
+        csv_path.write_text(
+            "DATE,OPEN,HIGH,LOW,CLOSE,CLOSE\n"
+            "1990-01-02,17,18,16,17.24,99.99\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SchemaError, match="duplicate CSV column"):
+            ingest_file(VIX, csv_path)
+
+    @pytest.mark.parametrize("row", [
+        "1990-01-02,17,18,16,17.24,unexpected",
+        "1990-01-02,17,18,16",
+    ])
+    def test_ragged_csv_rows_fail_instead_of_loading_partial_data(self, tmp_path: Path, row):
+        from pipeline.ingest import ingest_file
+
+        csv_path = tmp_path / "ragged.csv"
+        csv_path.write_text(
+            "DATE,OPEN,HIGH,LOW,CLOSE\n" + row + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SchemaError, match="different number of fields"):
+            ingest_file(VIX, csv_path)
+
 
 class TestDuplicates:
     def test_same_business_key_is_collapsed_to_one_observation(self):
