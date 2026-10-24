@@ -65,10 +65,13 @@ class TestHeaderValidation:
         with pytest.raises(SchemaError, match="no header row"):
             validate_header(VIX, None)
 
-    @pytest.mark.parametrize("header", [
-        ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "CLOSE"],
-        ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "VOLUME"],
-    ])
+    @pytest.mark.parametrize(
+        "header",
+        [
+            ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "CLOSE"],
+            ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "VOLUME"],
+        ],
+    )
     def test_rejects_duplicate_required_or_optional_columns(self, header):
         with pytest.raises(SchemaError, match="duplicate CSV column"):
             validate_header(VIX, header)
