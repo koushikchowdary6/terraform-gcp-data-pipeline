@@ -65,6 +65,22 @@ class TestHeaderValidation:
         with pytest.raises(SchemaError, match="no header row"):
             validate_header(VIX, None)
 
+    @pytest.mark.parametrize(
+        "header",
+        [
+            ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "CLOSE"],
+            ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME", "VOLUME"],
+        ],
+    )
+    def test_rejects_duplicate_required_or_optional_columns(self, header):
+        with pytest.raises(SchemaError, match="duplicate CSV column"):
+            validate_header(VIX, header)
+
+    @pytest.mark.parametrize("invalid", ["", "   ", None])
+    def test_rejects_blank_or_invalid_column_names(self, invalid):
+        with pytest.raises(SchemaError, match="blank or invalid"):
+            validate_header(VIX, ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", invalid])
+
 
 class TestDateParsing:
     def test_parses_iso_date(self):
