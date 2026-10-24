@@ -96,7 +96,21 @@ def validate_header(spec: SourceSpec, header: Iterable[str] | None) -> None:
     """Fail fast when the feed's columns are not what the code expects."""
     if header is None:
         raise SchemaError(f"{spec.name}: input file has no header row")
-    present = set(header)
+    columns = list(header)
+    if any(not isinstance(column, str) or not column.strip() for column in columns):
+        raise SchemaError(f"{spec.name}: input header contains a blank or invalid column name")
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for column in columns:
+        if column in seen:
+            duplicates.add(column)
+        seen.add(column)
+    if duplicates:
+        raise SchemaError(
+            f"{spec.name}: duplicate CSV column name(s) {sorted(duplicates)}. "
+            "Duplicate headers overwrite values in csv.DictReader."
+        )
+    present = set(columns)
     required = {spec.date_column, *spec.metric_columns}
     missing = sorted(required - present)
     if missing:
