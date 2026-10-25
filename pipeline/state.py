@@ -13,12 +13,35 @@ on the deterministic observation key.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 # Written into a batch directory once that batch has been loaded into the
 # cloud warehouse AND passed its quality checks there.
 DELIVERED_MARKER = "_delivered.json"
+
+
+def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
+    """Publish state with a unique same-directory temporary file.
+
+    A fixed .tmp name lets overlapping runs clobber one another before
+    rename; unique names and cleanup protect the previously published state
+    when serialization or replacement fails.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 class WatermarkStore:
@@ -53,11 +76,7 @@ class WatermarkStore:
     def set(self, source_name: str, value: date) -> None:
         data = self._read_all()
         data[source_name] = value.isoformat()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # Write-then-rename so an interrupted run cannot leave a partial file.
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        tmp.replace(self.path)
+        _atomic_write_json(self.path, data)
 
     def advance(self, source_name: str, value: date) -> bool:
         """Move the watermark forward only. Returns True if it moved."""
@@ -100,7 +119,25 @@ def batch_dirs(processed_dir: Path) -> list[Path]:
 
 
 def is_delivered(batch_dir: Path) -> bool:
-    return (Path(batch_dir) / DELIVERED_MARKER).exists()
+    """Only a readable, valid delivery receipt may suppress a retry.
+
+    A truncated or malformed marker is not evidence that cloud delivery
+    succeeded. Re-queueing is safe because warehouse loads are idempotent.
+    """
+    marker = Path(batch_dir) / DELIVERED_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    if not isinstance(payload, dict) or not isinstance(payload.get("delivered_at"), str):
+        return False
+    try:
+        delivered_at = datetime.fromisoformat(payload["delivered_at"])
+    except ValueError:
+        return False
+    return delivered_at.tzinfo is not None
 
 
 def pending_batches(processed_dir: Path) -> list[Path]:
@@ -112,7 +149,5 @@ def mark_delivered(batch_dir: Path, **details: object) -> Path:
     """Record that a batch reached the cloud warehouse and passed its checks."""
     path = Path(batch_dir) / DELIVERED_MARKER
     payload = {"delivered_at": datetime.now(tz=UTC).isoformat(), **details}
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    _atomic_write_json(path, payload)
     return path
