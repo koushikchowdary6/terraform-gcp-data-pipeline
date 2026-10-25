@@ -96,3 +96,20 @@ class TestFloorFiltering:
         floor = effective_floor(date(1990, 2, 2), 2)
         result = ingest_fixture(VIX, "vix_clean.csv", floor_date=floor)
         assert date(1990, 2, 1) in {o.observation_date for o in result.observations}
+
+
+def test_failed_watermark_publish_preserves_previous_state(tmp_path: Path, monkeypatch):
+    path = tmp_path / "wm.json"
+    store = WatermarkStore(path)
+    store.set("vix_daily", date(1990, 2, 2))
+    previous = path.read_text(encoding="utf-8")
+
+    def fail_replace(source, destination):
+        raise OSError("simulated interrupted publish")
+
+    monkeypatch.setattr("pipeline.state.os.replace", fail_replace)
+    with pytest.raises(OSError, match="interrupted publish"):
+        store.set("vix_daily", date(1990, 2, 3))
+
+    assert path.read_text(encoding="utf-8") == previous
+    assert list(tmp_path.glob("*.tmp")) == []
