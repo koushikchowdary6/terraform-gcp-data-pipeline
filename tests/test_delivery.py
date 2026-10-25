@@ -10,9 +10,9 @@ batch of only newer rows, and the failed one was skipped permanently.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 
 from pipeline.state import (
     DELIVERED_MARKER,
