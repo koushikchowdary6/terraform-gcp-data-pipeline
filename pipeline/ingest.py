@@ -13,6 +13,8 @@ Responsibilities, in order:
 from __future__ import annotations
 
 import csv
+import os
+import tempfile
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -217,6 +219,25 @@ def ingest_file(
     return result
 
 
+def _atomic_parquet_write(table: pa.Table, destination: Path) -> None:
+    """Publish only complete Parquet artifacts, preserving a prior good batch.
+
+    Parquet writers can fail after creating a partial file. Stage each artifact
+    beside its destination, sync it, then atomically replace the old version.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    os.close(fd)
+    try:
+        pq.write_table(table, temporary, compression="snappy")
+        with open(temporary, "rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def write_parquet(result: IngestResult, destination: Path) -> Path:
     """Write observations to Parquet (always, even when empty, for lineage)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +255,7 @@ def write_parquet(result: IngestResult, destination: Path) -> Path:
         },
         schema=PARQUET_SCHEMA,
     )
-    pq.write_table(table, destination, compression="snappy")
+    _atomic_parquet_write(table, destination)
     result.parquet_path = destination
     logger.info(
         "wrote parquet",
@@ -259,7 +280,7 @@ def write_rejects(result: IngestResult, destination: Path) -> Path | None:
         },
         schema=REJECT_SCHEMA,
     )
-    pq.write_table(table, destination, compression="snappy")
+    _atomic_parquet_write(table, destination)
     result.rejects_path = destination
     logger.warning(
         "wrote rejects",
