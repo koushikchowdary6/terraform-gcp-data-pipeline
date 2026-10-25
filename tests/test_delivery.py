@@ -10,6 +10,8 @@ batch of only newer rows, and the failed one was skipped permanently.
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 from pipeline.state import (
@@ -114,3 +116,33 @@ class TestFailedDeliveryIsRetried:
             mark_delivered(d, batch_id=d.name)
         assert pending_batches(tmp_path) == []
         assert all(is_delivered(d) for d in made)
+
+
+@pytest.mark.parametrize("receipt", [
+    "",
+    "{broken json",
+    "[]",
+    '{"delivered_at": "not-a-timestamp"}',
+    '{"delivered_at": "2026-10-24T00:00:00"}',
+])
+def test_invalid_delivery_receipt_is_retried(tmp_path: Path, receipt: str):
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    (batch / DELIVERED_MARKER).write_text(receipt, encoding="utf-8")
+    assert not is_delivered(batch)
+    assert pending_batches(tmp_path) == [batch]
+
+
+def test_failed_receipt_publish_preserves_previous_receipt(tmp_path: Path, monkeypatch):
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    marker = mark_delivered(batch, batch_id="original", rows_staged=1)
+    previous = marker.read_text(encoding="utf-8")
+
+    def fail_replace(source, destination):
+        raise OSError("simulated interrupted publish")
+
+    monkeypatch.setattr("pipeline.state.os.replace", fail_replace)
+    with pytest.raises(OSError, match="interrupted publish"):
+        mark_delivered(batch, batch_id="replacement", rows_staged=2)
+
+    assert marker.read_text(encoding="utf-8") == previous
+    assert list(batch.glob("*.tmp")) == []
