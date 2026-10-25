@@ -118,13 +118,16 @@ class TestFailedDeliveryIsRetried:
         assert all(is_delivered(d) for d in made)
 
 
-@pytest.mark.parametrize("receipt", [
-    "",
-    "{broken json",
-    "[]",
-    '{"delivered_at": "not-a-timestamp"}',
-    '{"delivered_at": "2026-10-24T00:00:00"}',
-])
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        "",
+        "{broken json",
+        "[]",
+        '{"delivered_at": "not-a-timestamp"}',
+        '{"delivered_at": "2026-10-24T00:00:00"}',
+    ],
+)
 def test_invalid_delivery_receipt_is_retried(tmp_path: Path, receipt: str):
     batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
     (batch / DELIVERED_MARKER).write_text(receipt, encoding="utf-8")
