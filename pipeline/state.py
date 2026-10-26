@@ -44,6 +44,16 @@ def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
             os.unlink(temporary)
 
 
+def _unique_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Do not let duplicate source keys silently change the ingestion floor."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate watermark source key: {key!r}")
+        result[key] = value
+    return result
+
+
 class WatermarkStore:
     """JSON-file watermark store used by local runs and tests."""
 
@@ -54,15 +64,29 @@ class WatermarkStore:
         if not self.path.exists():
             return {}
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8") or "{}")
-        except json.JSONDecodeError as exc:
+            data = json.loads(
+                self.path.read_text(encoding="utf-8") or "{}",
+                object_pairs_hook=_unique_json_keys,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
             raise RuntimeError(
                 f"Watermark file {self.path} is corrupt ({exc}). "
                 "Delete it to re-process from the beginning, or restore it from a backup."
             ) from exc
         if not isinstance(data, dict):
             raise RuntimeError(f"Watermark file {self.path} must contain a JSON object, got {type(data).__name__}")
-        return {str(k): str(v) for k, v in data.items()}
+        # Validate every stored source, not just the one requested: otherwise
+        # set() could preserve unrelated corrupt entries indefinitely.
+        for source, raw in data.items():
+            if not source or not isinstance(raw, str):
+                raise RuntimeError(f"Watermark file {self.path} has an invalid source or date value")
+            try:
+                valid = date.fromisoformat(raw).isoformat() == raw
+            except ValueError:
+                valid = False
+            if not valid:
+                raise RuntimeError(f"Watermark file {self.path} has an invalid ISO date for {source!r}")
+        return data
 
     def get(self, source_name: str) -> date | None:
         raw = self._read_all().get(source_name)

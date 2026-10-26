@@ -53,6 +53,33 @@ class TestWatermarkStore:
         with pytest.raises(RuntimeError, match="corrupt"):
             WatermarkStore(path).get("vix_daily")
 
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '{"vix_daily":"1990-02-02","vix_daily":"1990-01-01"}',
+            '{"vix_daily":"1990-02-02","other":{"nested":"bad"}}',
+            '{"vix_daily":"1990-02-02","other":"not-a-date"}',
+            '{"vix_daily":"19900202"}',
+            '{"vix_daily":null}',
+        ],
+    )
+    def test_corrupt_or_ambiguous_state_never_advances(self, tmp_path: Path, payload):
+        path = tmp_path / "wm.json"
+        path.write_text(payload, encoding="utf-8")
+        store = WatermarkStore(path)
+        with pytest.raises(RuntimeError, match="corrupt|invalid"):
+            store.get("vix_daily")
+        with pytest.raises(RuntimeError, match="corrupt|invalid"):
+            store.advance("vix_daily", date(1990, 3, 1))
+        assert path.read_text(encoding="utf-8") == payload
+
+    def test_valid_multi_source_state_remains_usable(self, tmp_path: Path):
+        store = WatermarkStore(tmp_path / "wm.json")
+        store.set("vix_daily", date(1990, 2, 2))
+        store.set("sp500_monthly", date(1871, 1, 1))
+        assert store.advance("vix_daily", date(1990, 2, 3))
+        assert store.get("sp500_monthly") == date(1871, 1, 1)
+
     def test_write_is_atomic_leaving_no_temp_file(self, tmp_path: Path):
         store = WatermarkStore(tmp_path / "wm.json")
         store.set("vix_daily", date(1990, 2, 2))
