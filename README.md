@@ -75,6 +75,13 @@ flowchart TD
 The watermark advances **only after** the quality checks pass, so a failed run
 is retried from the same position instead of silently skipping data.
 
+**Crash-safe raw CSV ingestion.** HTTP downloads are staged in unique sibling
+files, flushed and synchronized before atomic replacement. A network, disk,
+or publish failure preserves the prior CSV snapshot rather than leaving a
+truncated source for the next incremental run. Offline regression tests cover
+successful replacement, HTTP errors, sync failures, and publish failures.
+This is local filesystem durability, not an end-to-end cloud transaction.
+
 ## Quickstart
 
 ```bash
