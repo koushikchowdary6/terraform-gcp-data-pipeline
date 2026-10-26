@@ -43,9 +43,7 @@ def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("stage", ["sync", "publish"])
-def test_failed_fetch_preserves_last_good_snapshot_and_cleans_temp(
-    tmp_path, monkeypatch, stage
-):
+def test_failed_fetch_preserves_last_good_snapshot_and_cleans_temp(tmp_path, monkeypatch, stage):
     destination = tmp_path / VIX.raw_filename
     destination.write_bytes(b"last good snapshot")
     _mock_download(monkeypatch, FakeResponse(b"partially staged new CSV"))
