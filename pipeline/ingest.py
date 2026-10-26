@@ -128,7 +128,26 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
             f"If this environment has no outbound network access, download the file "
             f"manually and pass --input <path>. See docs/DATASETS.md."
         ) from exc
-    destination.write_bytes(response.content)
+    # Preserve the last verified source snapshot if a download is interrupted,
+    # the disk fills, or publication fails. Stage beside the destination so
+    # os.replace is atomic on the same filesystem, even under concurrent runs.
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(response.content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     logger.info(
         "fetched source",
         extra={"source_name": spec.name, "bytes": len(response.content), "path": str(destination)},
