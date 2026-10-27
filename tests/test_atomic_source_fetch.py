@@ -88,3 +88,20 @@ def test_new_destination_is_not_published_on_sync_failure(tmp_path, monkeypatch)
 
     assert not destination.exists()
     assert list(Path(destination.parent).iterdir()) == []
+
+
+@pytest.mark.parametrize("existing", [True, False])
+def test_empty_http_200_never_publishes_source_snapshot(tmp_path, monkeypatch, existing):
+    destination = tmp_path / VIX.raw_filename
+    if existing:
+        destination.write_bytes(b"last known-good CSV")
+    _mock_download(monkeypatch, FakeResponse(b""))
+
+    with pytest.raises(RuntimeError, match="is empty"):
+        ingest.fetch_source(VIX, destination)
+
+    if existing:
+        assert destination.read_bytes() == b"last known-good CSV"
+    else:
+        assert not destination.exists()
+    assert list(tmp_path.glob("*.tmp")) == []

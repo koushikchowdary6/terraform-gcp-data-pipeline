@@ -128,6 +128,11 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
             f"If this environment has no outbound network access, download the file "
             f"manually and pass --input <path>. See docs/DATASETS.md."
         ) from exc
+    # A 200 response with no bytes is not a valid source snapshot. Reject it
+    # before staging so a transient upstream outage cannot erase the last
+    # known-good offline input.
+    if not response.content:
+        raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
     # Preserve the last verified source snapshot if a download is interrupted,
     # the disk fills, or publication fails. Stage beside the destination so
     # os.replace is atomic on the same filesystem, even under concurrent runs.
