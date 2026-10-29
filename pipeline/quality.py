@@ -49,15 +49,13 @@ def _validate_evidence(checks: list[QualityCheck]) -> None:
     if any(not isinstance(c, QualityCheck) for c in checks):
         raise QualityCheckFailed("Data-quality suite returned invalid check records")
     names = [check.check_name for check in checks]
-    if (any(not isinstance(name, str) or not name.strip() for name in names)
-            or len(names) != len(set(names))):
+    if any(not isinstance(name, str) or not name.strip() for name in names) or len(names) != len(set(names)):
         raise QualityCheckFailed("Data-quality checks have missing or duplicate names")
     for check in checks:
         if not isinstance(check.status, str) or check.status.upper() not in {"PASS", "FAIL"}:
             raise QualityCheckFailed("Data-quality check has invalid PASS/FAIL status")
         # int(True) == 1 and int(0.5) == 0: neither is an observed row count.
-        if (isinstance(check.observed, bool)
-                or not isinstance(check.observed, Integral) or check.observed < 0):
+        if isinstance(check.observed, bool) or not isinstance(check.observed, Integral) or check.observed < 0:
             raise QualityCheckFailed("Data-quality check has invalid observed row count")
         if not isinstance(check.detail, str) or not check.detail.strip():
             raise QualityCheckFailed("Data-quality check has missing detail")
