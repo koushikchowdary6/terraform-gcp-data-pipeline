@@ -32,12 +32,15 @@ def test_missing_check_detail_is_not_valid_evidence(detail):
         enforce([QualityCheck("row_count", "PASS", 1, detail)])
 
 
-@pytest.mark.parametrize("raw", [
-    ("row_count", "PASS", True, "rows"),
-    ("row_count", "PASS", 0.75, "rows"),
-    ("row_count", "UNKNOWN", 1, "rows"),
-    ("row_count", "PASS", 1, None),
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ("row_count", "PASS", True, "rows"),
+        ("row_count", "PASS", 0.75, "rows"),
+        ("row_count", "UNKNOWN", 1, "rows"),
+        ("row_count", "PASS", 1, None),
+    ],
+)
 def test_local_query_rejects_malformed_results_before_logging(raw):
     warehouse = SimpleNamespace(query=lambda sql: [raw])
     with pytest.raises(QualityCheckFailed):
