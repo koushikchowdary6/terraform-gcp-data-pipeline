@@ -9,6 +9,7 @@ should fail.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 
 from .logging_setup import get_logger
 from .sql_files import duckdb_sql
@@ -41,10 +42,31 @@ class QualityCheck:
         }
 
 
+def _validate_evidence(checks: list[QualityCheck]) -> None:
+    """Reject malformed quality results before they can look like a PASS."""
+    if not checks:
+        raise QualityCheckFailed("No data-quality checks returned; warehouse was not verified")
+    if any(not isinstance(c, QualityCheck) for c in checks):
+        raise QualityCheckFailed("Data-quality suite returned invalid check records")
+    names = [check.check_name for check in checks]
+    if any(not isinstance(name, str) or not name.strip() for name in names) or len(names) != len(set(names)):
+        raise QualityCheckFailed("Data-quality checks have missing or duplicate names")
+    for check in checks:
+        if not isinstance(check.status, str) or check.status.upper() not in {"PASS", "FAIL"}:
+            raise QualityCheckFailed("Data-quality check has invalid PASS/FAIL status")
+        # int(True) == 1 and int(0.5) == 0: neither is an observed row count.
+        if isinstance(check.observed, bool) or not isinstance(check.observed, Integral) or check.observed < 0:
+            raise QualityCheckFailed("Data-quality check has invalid observed row count")
+        if not isinstance(check.detail, str) or not check.detail.strip():
+            raise QualityCheckFailed("Data-quality check has missing detail")
+
+
 def run_local_checks(warehouse: LocalWarehouse) -> list[QualityCheck]:
     """Execute the DuckDB quality suite and return one result per check."""
     rows = warehouse.query(duckdb_sql("04_quality.sql"))
-    checks = [QualityCheck(check_name=str(r[0]), status=str(r[1]), observed=int(r[2]), detail=str(r[3])) for r in rows]
+    # Do not coerce malformed SQL result types into reassuring-looking values.
+    checks = [QualityCheck(check_name=r[0], status=r[1], observed=r[2], detail=r[3]) for r in rows]
+    _validate_evidence(checks)
     for check in checks:
         log = logger.info if check.passed else logger.error
         log("quality check", extra=check.as_dict())
@@ -57,14 +79,7 @@ def failures(checks: list[QualityCheck]) -> list[QualityCheck]:
 
 def enforce(checks: list[QualityCheck], *, fail_on_error: bool = True) -> None:
     """Fail closed on missing/ambiguous checks; optionally warn on measured failures."""
-    # An empty query result is not evidence of a clean warehouse. This can
-    # happen if a quality SQL file is accidentally changed to return no rows.
-    # Even warning-only deployments must not publish a fabricated PASS.
-    if not checks:
-        raise QualityCheckFailed("No data-quality checks returned; warehouse was not verified")
-    names = [check.check_name for check in checks]
-    if any(not name.strip() for name in names) or len(names) != len(set(names)):
-        raise QualityCheckFailed("Data-quality checks have missing or duplicate names")
+    _validate_evidence(checks)
     bad = failures(checks)
     if not bad:
         return
