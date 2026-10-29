@@ -56,7 +56,15 @@ def failures(checks: list[QualityCheck]) -> list[QualityCheck]:
 
 
 def enforce(checks: list[QualityCheck], *, fail_on_error: bool = True) -> None:
-    """Raise when any check failed, unless failures are configured as warnings."""
+    """Fail closed on missing/ambiguous checks; optionally warn on measured failures."""
+    # An empty query result is not evidence of a clean warehouse. This can
+    # happen if a quality SQL file is accidentally changed to return no rows.
+    # Even warning-only deployments must not publish a fabricated PASS.
+    if not checks:
+        raise QualityCheckFailed("No data-quality checks returned; warehouse was not verified")
+    names = [check.check_name for check in checks]
+    if any(not name.strip() for name in names) or len(names) != len(set(names)):
+        raise QualityCheckFailed("Data-quality checks have missing or duplicate names")
     bad = failures(checks)
     if not bad:
         return
