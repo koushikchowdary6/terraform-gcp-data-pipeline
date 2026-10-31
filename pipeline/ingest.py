@@ -159,9 +159,7 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                     f"Could not download {spec.name}: interrupted stream; previous snapshot preserved"
                 ) from exc
             if not bytes_written:
-                raise RuntimeError(
-                    f"Downloaded source {spec.name} is empty; previous snapshot preserved"
-                )
+                raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
@@ -175,6 +173,7 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
         extra={"source_name": spec.name, "bytes": bytes_written, "path": str(destination)},
     )
     return destination
+
 
 def _iter_rows(path: Path) -> Iterator[tuple[int, dict[str, str], Sequence[str] | None]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
