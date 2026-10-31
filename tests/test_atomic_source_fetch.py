@@ -10,25 +10,41 @@ from pipeline.sources import VIX
 
 
 class FakeResponse:
-    def __init__(self, content=b"new verified CSV", *, failure=None):
-        self.content = content
+    def __init__(self, content=b"new verified CSV", *, failure=None, chunks=None):
+        self.chunks = chunks if chunks is not None else [content]
         self.failure = failure
+        self.closed = False
+        self.consumed = 0
+
+    @property
+    def content(self):
+        raise AssertionError("streaming fetch must not buffer response.content")
 
     def raise_for_status(self):
         if self.failure is not None:
             raise self.failure
 
+    def iter_content(self, chunk_size):
+        assert chunk_size > 0
+        for chunk in self.chunks:
+            self.consumed += 1
+            if isinstance(chunk, Exception):
+                raise chunk
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
 
 def _mock_download(monkeypatch, response):
     calls = []
 
-    def fake_get(url, *, timeout):
-        calls.append((url, timeout))
+    def fake_get(url, *, timeout, stream):
+        calls.append((url, timeout, stream))
         return response
 
     monkeypatch.setattr(requests, "get", fake_get)
     return calls
-
 
 def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
     destination = tmp_path / "raw" / VIX.raw_filename
@@ -38,7 +54,7 @@ def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
 
     assert ingest.fetch_source(VIX, destination, timeout=12) == destination
     assert destination.read_bytes() == b"new CSV"
-    assert calls == [(VIX.url, 12)]
+    assert calls == [(VIX.url, 12, True)]
     assert list(destination.parent.iterdir()) == [destination]
 
 
@@ -104,4 +120,60 @@ def test_empty_http_200_never_publishes_source_snapshot(tmp_path, monkeypatch, e
         assert destination.read_bytes() == b"last known-good CSV"
     else:
         assert not destination.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_streamed_chunks_preserve_exact_bytes_and_close_response(tmp_path, monkeypatch):
+    destination = tmp_path / VIX.raw_filename
+    payload = b'DATE,OPEN,HIGH,LOW,CLOSE\r\n"1990-01-02",17,18,16,17.24\r\n'
+    response = FakeResponse(chunks=[payload[:8], b"", payload[8:23], payload[23:]])
+    _mock_download(monkeypatch, response)
+
+    assert ingest.fetch_source(VIX, destination) == destination
+    assert destination.read_bytes() == payload
+    assert response.consumed == 4
+    assert response.closed
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_oversized_stream_stops_before_reading_remaining_chunks(tmp_path, monkeypatch):
+    destination = tmp_path / VIX.raw_filename
+    destination.write_bytes(b"last good snapshot")
+    monkeypatch.setattr(ingest, "MAX_SOURCE_BYTES", 8)
+    response = FakeResponse(chunks=[b"12345678", b"9", b"must-not-read"])
+    _mock_download(monkeypatch, response)
+
+    with pytest.raises(RuntimeError, match="exceeds maximum size"):
+        ingest.fetch_source(VIX, destination)
+
+    assert response.consumed == 2
+    assert response.closed
+    assert destination.read_bytes() == b"last good snapshot"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_exact_source_size_limit_is_accepted(tmp_path, monkeypatch):
+    destination = tmp_path / VIX.raw_filename
+    monkeypatch.setattr(ingest, "MAX_SOURCE_BYTES", 8)
+    response = FakeResponse(chunks=[b"1234", b"5678"])
+    _mock_download(monkeypatch, response)
+
+    assert ingest.fetch_source(VIX, destination) == destination
+    assert destination.read_bytes() == b"12345678"
+    assert response.closed
+
+
+def test_interrupted_stream_preserves_snapshot_and_cleans_temp(tmp_path, monkeypatch):
+    destination = tmp_path / VIX.raw_filename
+    destination.write_bytes(b"last good snapshot")
+    response = FakeResponse(chunks=[
+        b"partial", requests.exceptions.ChunkedEncodingError("connection reset"),
+    ])
+    _mock_download(monkeypatch, response)
+
+    with pytest.raises(RuntimeError, match="interrupted stream"):
+        ingest.fetch_source(VIX, destination)
+
+    assert response.closed
+    assert destination.read_bytes() == b"last good snapshot"
     assert list(tmp_path.glob("*.tmp")) == []
