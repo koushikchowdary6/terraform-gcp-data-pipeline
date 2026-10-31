@@ -46,6 +46,7 @@ def _mock_download(monkeypatch, response):
     monkeypatch.setattr(requests, "get", fake_get)
     return calls
 
+
 def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
     destination = tmp_path / "raw" / VIX.raw_filename
     destination.parent.mkdir()
@@ -166,9 +167,12 @@ def test_exact_source_size_limit_is_accepted(tmp_path, monkeypatch):
 def test_interrupted_stream_preserves_snapshot_and_cleans_temp(tmp_path, monkeypatch):
     destination = tmp_path / VIX.raw_filename
     destination.write_bytes(b"last good snapshot")
-    response = FakeResponse(chunks=[
-        b"partial", requests.exceptions.ChunkedEncodingError("connection reset"),
-    ])
+    response = FakeResponse(
+        chunks=[
+            b"partial",
+            requests.exceptions.ChunkedEncodingError("connection reset"),
+        ]
+    )
     _mock_download(monkeypatch, response)
 
     with pytest.raises(RuntimeError, match="interrupted stream"):
