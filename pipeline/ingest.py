@@ -42,6 +42,8 @@ from .sources import SourceSpec
 logger = get_logger(__name__)
 
 HTTP_TIMEOUT_SECONDS = 60
+# Enforced as chunks arrive, before the HTTP response is buffered in memory.
+MAX_SOURCE_BYTES = 20 * 1024 * 1024
 
 PARQUET_SCHEMA = pa.schema(
     [
@@ -110,34 +112,30 @@ def new_batch_id() -> str:
 
 
 def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIMEOUT_SECONDS) -> Path:
-    """Download a source feed to ``destination``.
+    """Stream a bounded HTTP response into an atomically published snapshot.
 
-    Imported lazily so the package stays importable (and unit-testable) in
-    environments without network access or the ``requests`` dependency.
+    Do not buffer the entire upstream body with response.content: a large or
+    interrupted response must preserve the previous offline CSV snapshot.
+    The size bound covers downloaded bytes, not downstream parser memory.
     """
     import requests  # noqa: PLC0415 - intentional lazy import
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     logger.info("fetching source", extra={"source_name": spec.name, "url": spec.url})
-    try:
-        response = requests.get(spec.url, timeout=timeout)
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        raise RuntimeError(
-            f"Could not download {spec.name} from {spec.url}: {exc}. "
-            f"If this environment has no outbound network access, download the file "
-            f"manually and pass --input <path>. See docs/DATASETS.md."
-        ) from exc
-    # A 200 response with no bytes is not a valid source snapshot. Reject it
-    # before staging so a transient upstream outage cannot erase the last
-    # known-good offline input.
-    if not response.content:
-        raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
-    # Preserve the last verified source snapshot if a download is interrupted,
-    # the disk fills, or publication fails. Stage beside the destination so
-    # os.replace is atomic on the same filesystem, even under concurrent runs.
+    response = None
     temporary: Path | None = None
+    bytes_written = 0
     try:
+        try:
+            response = requests.get(spec.url, timeout=timeout, stream=True)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                f"Could not download {spec.name} from {spec.url}: {exc}. "
+                "If this environment has no outbound network access, download the file "
+                "manually and pass --input <path>. See docs/DATASETS.md."
+            ) from exc
+
         with tempfile.NamedTemporaryFile(
             mode="wb",
             dir=destination.parent,
@@ -146,19 +144,37 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
             delete=False,
         ) as handle:
             temporary = Path(handle.name)
-            handle.write(response.content)
+            try:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_SOURCE_BYTES:
+                        raise RuntimeError(
+                            f"Downloaded source {spec.name} exceeds maximum size; previous snapshot preserved"
+                        )
+                    handle.write(chunk)
+            except requests.RequestException as exc:
+                raise RuntimeError(
+                    f"Could not download {spec.name}: interrupted stream; previous snapshot preserved"
+                ) from exc
+            if not bytes_written:
+                raise RuntimeError(
+                    f"Downloaded source {spec.name} is empty; previous snapshot preserved"
+                )
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
     finally:
+        if response is not None:
+            response.close()
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     logger.info(
         "fetched source",
-        extra={"source_name": spec.name, "bytes": len(response.content), "path": str(destination)},
+        extra={"source_name": spec.name, "bytes": bytes_written, "path": str(destination)},
     )
     return destination
-
 
 def _iter_rows(path: Path) -> Iterator[tuple[int, dict[str, str], Sequence[str] | None]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
