@@ -140,3 +140,55 @@ def test_failed_watermark_publish_preserves_previous_state(tmp_path: Path, monke
 
     assert path.read_text(encoding="utf-8") == previous
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("payload", [bytes([0xFF]), b"{" + b"x" * 64_001 + b"}"])
+def test_unreadable_or_oversized_watermark_never_advances(tmp_path: Path, payload: bytes):
+    path = tmp_path / "wm.json"
+    path.write_bytes(payload)
+    store = WatermarkStore(path)
+    with pytest.raises(RuntimeError, match="corrupt|exceeds"):
+        store.advance("vix_daily", date(1990, 3, 1))
+    assert path.read_bytes() == payload
+
+
+def test_symlinked_watermark_cannot_redirect_incremental_state(tmp_path: Path):
+    import os
+
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    real = tmp_path / "other.json"
+    real.write_text('{"vix_daily":"1990-02-02"}', encoding="utf-8")
+    alias = tmp_path / "wm.json"
+    try:
+        alias.symlink_to(real)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted")
+    with pytest.raises(RuntimeError, match="symlink"):
+        WatermarkStore(alias).advance("vix_daily", date(1990, 3, 1))
+    assert real.read_text(encoding="utf-8") == '{"vix_daily":"1990-02-02"}'
+
+
+def test_special_file_watermark_is_rejected_without_blocking(tmp_path: Path):
+    import os
+
+    if not (hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK")):
+        pytest.skip("nonblocking FIFOs unavailable")
+    path = tmp_path / "wm.json"
+    os.mkfifo(path)
+    with pytest.raises(RuntimeError, match="regular file"):
+        WatermarkStore(path).get("vix_daily")
+
+
+def test_exact_watermark_size_limit_remains_readable(tmp_path: Path):
+    from pipeline.state import MAX_WATERMARK_BYTES
+
+    path = tmp_path / "wm.json"
+    # A valid JSON object at the exact byte limit is accepted, not rejected
+    # merely because the bounded reader requests one sentinel byte.
+    prefix = '{"vix_daily":"1990-02-02","'
+    suffix = '":"1990-01-01"}'
+    key = "x" * (MAX_WATERMARK_BYTES - len(prefix) - len(suffix))
+    path.write_text(prefix + key + suffix, encoding="utf-8")
+    assert path.stat().st_size == MAX_WATERMARK_BYTES
+    assert WatermarkStore(path).get("vix_daily") == date(1990, 2, 2)
