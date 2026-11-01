@@ -183,6 +183,9 @@ def pending_batches(processed_dir: Path) -> list[Path]:
 def mark_delivered(batch_dir: Path, **details: object) -> Path:
     """Record that a batch reached the cloud warehouse and passed its checks."""
     path = Path(batch_dir) / DELIVERED_MARKER
-    # Derive the batch identity from the directory, not untrusted caller details.\n    # A receipt copied to another batch must not suppress its cloud retry.\n    payload = {**details, "batch_id": Path(batch_dir).name.removeprefix("batch="),\n               "delivered_at": datetime.now(tz=UTC).isoformat()}
+    # Derive the batch identity from the directory, not untrusted caller details.
+    # A receipt copied to another batch must not suppress its cloud retry.
+    payload = {**details, "batch_id": Path(batch_dir).name.removeprefix("batch="),
+               "delivered_at": datetime.now(tz=UTC).isoformat()}
     _atomic_write_json(path, payload)
     return path
