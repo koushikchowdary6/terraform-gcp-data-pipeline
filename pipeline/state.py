@@ -141,10 +141,8 @@ def batch_dirs(processed_dir: Path) -> list[Path]:
 
     Batch ids start with a UTC timestamp, so lexical order is chronological.
     """
-    directories = (
-        path for path in Path(processed_dir).glob("batch=*")
-        if path.is_dir() and not path.is_symlink()
-    )
+    candidates = Path(processed_dir).glob("batch=*")
+    directories = (path for path in candidates if path.is_dir() and not path.is_symlink())
     return sorted(directories, key=lambda path: path.name)
 
 
@@ -169,9 +167,11 @@ def is_delivered(batch_dir: Path) -> bool:
         if len(raw) > MAX_DELIVERY_RECEIPT_BYTES:
             return False
         payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_keys)
-        if (not isinstance(payload, dict)
-                or payload.get("batch_id") != batch_dir.name.removeprefix("batch=")
-                or not isinstance(payload.get("delivered_at"), str)):
+        if (
+            not isinstance(payload, dict)
+            or payload.get("batch_id") != batch_dir.name.removeprefix("batch=")
+            or not isinstance(payload.get("delivered_at"), str)
+        ):
             return False
         delivered_at = datetime.fromisoformat(payload["delivered_at"])
         return delivered_at.tzinfo is not None
@@ -189,7 +189,10 @@ def mark_delivered(batch_dir: Path, **details: object) -> Path:
     path = Path(batch_dir) / DELIVERED_MARKER
     # Derive the batch identity from the directory, not untrusted caller details.
     # A receipt copied to another batch must not suppress its cloud retry.
-    payload = {**details, "batch_id": Path(batch_dir).name.removeprefix("batch="),
-               "delivered_at": datetime.now(tz=UTC).isoformat()}
+    payload = {
+        **details,
+        "batch_id": Path(batch_dir).name.removeprefix("batch="),
+        "delivered_at": datetime.now(tz=UTC).isoformat(),
+    }
     _atomic_write_json(path, payload)
     return path
