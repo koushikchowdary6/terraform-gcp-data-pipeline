@@ -142,7 +142,7 @@ def test_failed_watermark_publish_preserves_previous_state(tmp_path: Path, monke
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-@pytest.mark.parametrize("payload", [b"\\xff", b"{" + b"x" * 64_001 + b"}"])
+@pytest.mark.parametrize("payload", [bytes([0xFF]), b"{" + b"x" * 64_001 + b"}"])
 def test_unreadable_or_oversized_watermark_never_advances(tmp_path: Path, payload: bytes):
     path = tmp_path / "wm.json"
     path.write_bytes(payload)
