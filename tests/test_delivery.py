@@ -183,6 +183,7 @@ def test_duplicate_receipt_keys_leave_batch_pending(tmp_path: Path):
 
 def test_oversized_receipt_is_not_delivery_evidence(tmp_path: Path):
     from pipeline.state import MAX_DELIVERY_RECEIPT_BYTES
+
     batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
     marker = mark_delivered(batch)
     payload = json.loads(marker.read_text(encoding="utf-8"))
@@ -211,6 +212,7 @@ def test_symlinked_receipt_and_batch_directory_are_ignored(tmp_path: Path):
 )
 def test_fifo_receipt_is_not_read_as_delivered(tmp_path: Path):
     import os
+
     batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
     os.mkfifo(batch / DELIVERED_MARKER)
     assert not is_delivered(batch)
