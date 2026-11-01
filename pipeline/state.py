@@ -23,6 +23,9 @@ from pathlib import Path
 # cloud warehouse AND passed its quality checks there.
 DELIVERED_MARKER = "_delivered.json"
 MAX_DELIVERY_RECEIPT_BYTES = 64_000
+# A watermark contains a handful of source/date pairs. A giant, symlinked,
+# or special-file state must not be read as trusted incremental progress.
+MAX_WATERMARK_BYTES = 64_000
 
 
 def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
@@ -63,14 +66,30 @@ class WatermarkStore:
         self.path = Path(path)
 
     def _read_all(self) -> dict[str, str]:
-        if not self.path.exists():
+        # Validate the opened descriptor, not only the path: a symlink swap
+        # or FIFO must not redirect the watermark read or hang a worker.
+        # O_NOFOLLOW is used where available; the explicit check also covers
+        # platforms without it.
+        if self.path.is_symlink():
+            raise RuntimeError(f"Watermark file {self.path} must not be a symlink")
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            with os.fdopen(os.open(self.path, flags), "rb") as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise RuntimeError(f"Watermark file {self.path} must be a regular file")
+                raw = handle.read(MAX_WATERMARK_BYTES + 1)
+        except FileNotFoundError:
             return {}
+        except OSError as exc:
+            raise RuntimeError(f"Watermark file {self.path} cannot be safely read: {exc}") from exc
+        if len(raw) > MAX_WATERMARK_BYTES:
+            raise RuntimeError(f"Watermark file {self.path} exceeds {MAX_WATERMARK_BYTES} bytes")
         try:
             data = json.loads(
-                self.path.read_text(encoding="utf-8") or "{}",
+                raw.decode("utf-8") or "{}",
                 object_pairs_hook=_unique_json_keys,
             )
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, ValueError, UnicodeError) as exc:
             raise RuntimeError(
                 f"Watermark file {self.path} is corrupt ({exc}). "
                 "Delete it to re-process from the beginning, or restore it from a backup."
