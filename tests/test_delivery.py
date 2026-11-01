@@ -149,3 +149,70 @@ def test_failed_receipt_publish_preserves_previous_receipt(tmp_path: Path, monke
 
     assert marker.read_text(encoding="utf-8") == previous
     assert list(batch.glob("*.tmp")) == []
+
+
+def test_copied_receipt_cannot_suppress_another_batch(tmp_path: Path):
+    first = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    second = make_batch(tmp_path, "20260102T000000Z-bbbb")
+    original = mark_delivered(first, batch_id="20260101T000000Z-aaaa")
+    (second / DELIVERED_MARKER).write_bytes(original.read_bytes())
+    assert is_delivered(first)
+    assert not is_delivered(second)
+    assert pending_batches(tmp_path) == [second]
+
+
+def test_caller_cannot_spoof_receipt_batch_or_timestamp(tmp_path: Path):
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    marker = mark_delivered(batch, batch_id="other", delivered_at="not-a-time")
+    receipt = json.loads(marker.read_text(encoding="utf-8"))
+    assert receipt["batch_id"] == "20260101T000000Z-aaaa"
+    assert receipt["delivered_at"] != "not-a-time"
+    assert is_delivered(batch)
+
+
+def test_duplicate_receipt_keys_leave_batch_pending(tmp_path: Path):
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    (batch / DELIVERED_MARKER).write_text(
+        '{"batch_id":"20260101T000000Z-aaaa",'
+        '"delivered_at":"2026-01-01T00:00:00+00:00",'
+        '"delivered_at":"2026-01-02T00:00:00+00:00"}',
+        encoding="utf-8",
+    )
+    assert not is_delivered(batch)
+
+
+def test_oversized_receipt_is_not_delivery_evidence(tmp_path: Path):
+    from pipeline.state import MAX_DELIVERY_RECEIPT_BYTES
+
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    marker = mark_delivered(batch)
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    payload["padding"] = "x" * MAX_DELIVERY_RECEIPT_BYTES
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+    assert not is_delivered(batch)
+    assert pending_batches(tmp_path) == [batch]
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlink unavailable")
+def test_symlinked_receipt_and_batch_directory_are_ignored(tmp_path: Path):
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    marker = mark_delivered(batch)
+    real_receipt = tmp_path / "real-receipt.json"
+    marker.rename(real_receipt)
+    marker.symlink_to(real_receipt)
+    assert not is_delivered(batch)
+    alias = tmp_path / "batch=20260102T000000Z-bbbb"
+    alias.symlink_to(batch, target_is_directory=True)
+    assert batch_dirs(tmp_path) == [batch]
+
+
+@pytest.mark.skipif(
+    not (hasattr(__import__("os"), "mkfifo") and hasattr(__import__("os"), "O_NONBLOCK")),
+    reason="nonblocking FIFOs unavailable",
+)
+def test_fifo_receipt_is_not_read_as_delivered(tmp_path: Path):
+    import os
+
+    batch = make_batch(tmp_path, "20260101T000000Z-aaaa")
+    os.mkfifo(batch / DELIVERED_MARKER)
+    assert not is_delivered(batch)

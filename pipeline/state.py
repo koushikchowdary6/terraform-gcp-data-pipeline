@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,7 @@ from pathlib import Path
 # Written into a batch directory once that batch has been loaded into the
 # cloud warehouse AND passed its quality checks there.
 DELIVERED_MARKER = "_delivered.json"
+MAX_DELIVERY_RECEIPT_BYTES = 64_000
 
 
 def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
@@ -139,29 +141,42 @@ def batch_dirs(processed_dir: Path) -> list[Path]:
 
     Batch ids start with a UTC timestamp, so lexical order is chronological.
     """
-    return sorted((p for p in Path(processed_dir).glob("batch=*") if p.is_dir()), key=lambda p: p.name)
+    candidates = Path(processed_dir).glob("batch=*")
+    directories = (path for path in candidates if path.is_dir() and not path.is_symlink())
+    return sorted(directories, key=lambda path: path.name)
 
 
 def is_delivered(batch_dir: Path) -> bool:
-    """Only a readable, valid delivery receipt may suppress a retry.
+    """Only a bounded, regular, batch-bound receipt can suppress a retry.
 
-    A truncated or malformed marker is not evidence that cloud delivery
-    succeeded. Re-queueing is safe because warehouse loads are idempotent.
+    A copied marker from a different batch, a symlink to an unrelated
+    receipt, or malformed JSON must leave the batch pending. This is local
+    state integrity, not an authenticated cloud-delivery attestation.
     """
-    marker = Path(batch_dir) / DELIVERED_MARKER
-    if not marker.is_file():
-        return False
+    batch_dir = Path(batch_dir)
+    marker = batch_dir / DELIVERED_MARKER
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return False
-    if not isinstance(payload, dict) or not isinstance(payload.get("delivered_at"), str):
-        return False
-    try:
+        # On platforms without O_NOFOLLOW, reject symlinks before opening.
+        if marker.is_symlink():
+            return False
+        with os.fdopen(os.open(marker, flags), "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return False
+            raw = handle.read(MAX_DELIVERY_RECEIPT_BYTES + 1)
+        if len(raw) > MAX_DELIVERY_RECEIPT_BYTES:
+            return False
+        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_keys)
+        if (
+            not isinstance(payload, dict)
+            or payload.get("batch_id") != batch_dir.name.removeprefix("batch=")
+            or not isinstance(payload.get("delivered_at"), str)
+        ):
+            return False
         delivered_at = datetime.fromisoformat(payload["delivered_at"])
-    except ValueError:
+        return delivered_at.tzinfo is not None
+    except (OSError, ValueError, UnicodeError, RecursionError):
         return False
-    return delivered_at.tzinfo is not None
 
 
 def pending_batches(processed_dir: Path) -> list[Path]:
@@ -172,6 +187,12 @@ def pending_batches(processed_dir: Path) -> list[Path]:
 def mark_delivered(batch_dir: Path, **details: object) -> Path:
     """Record that a batch reached the cloud warehouse and passed its checks."""
     path = Path(batch_dir) / DELIVERED_MARKER
-    payload = {"delivered_at": datetime.now(tz=UTC).isoformat(), **details}
+    # Derive the batch identity from the directory, not untrusted caller details.
+    # A receipt copied to another batch must not suppress its cloud retry.
+    payload = {
+        **details,
+        "batch_id": Path(batch_dir).name.removeprefix("batch="),
+        "delivered_at": datetime.now(tz=UTC).isoformat(),
+    }
     _atomic_write_json(path, payload)
     return path
