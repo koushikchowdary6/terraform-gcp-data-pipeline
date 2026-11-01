@@ -141,7 +141,11 @@ def batch_dirs(processed_dir: Path) -> list[Path]:
 
     Batch ids start with a UTC timestamp, so lexical order is chronological.
     """
-    return sorted((p for p in Path(processed_dir).glob("batch=*") if p.is_dir() and not p.is_symlink()), key=lambda p: p.name)
+    directories = (
+        path for path in Path(processed_dir).glob("batch=*")
+        if path.is_dir() and not path.is_symlink()
+    )
+    return sorted(directories, key=lambda path: path.name)
 
 
 def is_delivered(batch_dir: Path) -> bool:
