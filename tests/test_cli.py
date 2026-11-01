@@ -108,3 +108,64 @@ class TestCloudGuards:
         # Exit code 2 is reserved for configuration problems, and the pipeline
         # must refuse before making any cloud call.
         assert main(["--log-level", "ERROR", "run-cloud"]) == 2
+
+
+class TestCloudDeliveryIntegrity:
+    """A cloud receipt must never suppress retries of missing or failed data."""
+
+    def test_empty_batch_remains_pending_instead_of_being_marked_delivered(
+        self, local_env: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from pipeline.state import DELIVERED_MARKER, pending_batches
+
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        batch = local_env / "processed" / "batch=20260101T000000Z-aaaa"
+        batch.mkdir(parents=True)
+
+        class FakeWarehouse:
+            def __init__(self, *args):
+                pass
+
+            def load_staging_from_gcs(self, uris):
+                raise AssertionError("no warehouse load is allowed without artifacts")
+
+        monkeypatch.setattr("pipeline.bq.BigQueryWarehouse", FakeWarehouse)
+        assert main(["--log-level", "ERROR", "run-cloud", "--skip-upload"]) == 1
+        assert not (batch / DELIVERED_MARKER).exists()
+        assert pending_batches(local_env / "processed") == [batch]
+
+    def test_cloud_quality_failure_stays_pending_even_in_local_warn_mode(
+        self, local_env: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from pipeline.quality import QualityCheck
+        from pipeline.state import DELIVERED_MARKER, pending_batches
+
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("PIPELINE_FAIL_ON_QUALITY_ERROR", "false")
+        batch = local_env / "processed" / "batch=20260101T000000Z-aaaa"
+        batch.mkdir(parents=True)
+        (batch / "vix_daily.parquet").write_bytes(b"fake artifact for mocked cloud")
+
+        class FakeWarehouse:
+            def __init__(self, *args):
+                pass
+
+            def load_staging_from_gcs(self, uris):
+                assert len(uris) == 1
+                return 1
+
+            def merge(self):
+                return 1
+
+            def build_analytics(self):
+                return None
+
+            def run_quality(self):
+                return [QualityCheck("integrity", "FAIL", 1, "bad cloud row")]
+
+        monkeypatch.setattr("pipeline.bq.BigQueryWarehouse", FakeWarehouse)
+        assert main(["--log-level", "ERROR", "run-cloud", "--skip-upload"]) == 1
+        assert not (batch / DELIVERED_MARKER).exists()
+        assert pending_batches(local_env / "processed") == [batch]

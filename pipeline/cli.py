@@ -222,10 +222,13 @@ def cmd_run_cloud(args: argparse.Namespace) -> int:
                 uris.append(upload_file(bucket, parquet_path, object_name, project_id=project_id))
 
         if not uris:
-            logger.warning("batch has no parquet files; marking delivered", extra={"batch_id": batch_id})
-            mark_delivered(batch_dir, batch_id=batch_id, rows_staged=0, note="no parquet files")
-            delivered += 1
-            continue
+            # A missing artifact is not a successfully delivered empty batch.
+            # Marking it delivered would permanently suppress recovery after
+            # a failed or incomplete local export.
+            raise FileNotFoundError(
+                f"Batch {batch_id} contains no Parquet artifacts; restore or regenerate "
+                "the local batch before cloud delivery"
+            )
 
         staged = warehouse.load_staging_from_gcs(uris)
         affected = warehouse.merge()
@@ -234,7 +237,10 @@ def cmd_run_cloud(args: argparse.Namespace) -> int:
         print(format_table(checks))
         # Raises on failure, so the marker below is never written for a batch
         # that did not verify - it stays pending and is retried next run.
-        enforce(checks, fail_on_error=cfg.fail_on_quality_error)
+        # The local warn-only mode is useful for exploration, but a cloud
+        # delivery receipt must mean the warehouse passed every quality check.
+        # Otherwise failed batches would be permanently excluded from retries.
+        enforce(checks, fail_on_error=True)
 
         mark_delivered(batch_dir, batch_id=batch_id, rows_staged=staged, merge_rows_affected=affected)
         delivered += 1
