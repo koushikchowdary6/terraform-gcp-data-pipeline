@@ -167,6 +167,29 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                     f"Source {spec.name} returned HTTP {response.status_code}, "
                     "not a complete HTTP 200 CSV; previous snapshot preserved"
                 )
+            # Compare the declared wire length only for identity-encoded
+            # bodies: requests.iter_content() yields decoded bytes for gzip
+            # and other content encodings. This is an independent integrity
+            # guard before publishing the offline recovery snapshot.
+            headers = getattr(response, "headers", {})
+            content_encoding = headers.get("Content-Encoding", "").strip().lower()
+            length_header = headers.get("Content-Length")
+            expected_bytes = None
+            if length_header is not None and content_encoding in {"", "identity"}:
+                if (
+                    not isinstance(length_header, str)
+                    or len(length_header) > 20
+                    or not length_header.isascii()
+                    or not length_header.isdecimal()
+                ):
+                    raise RuntimeError(
+                        f"Source {spec.name} has invalid Content-Length; previous snapshot preserved"
+                    )
+                expected_bytes = int(length_header)
+                if expected_bytes > MAX_SOURCE_BYTES:
+                    raise RuntimeError(
+                        f"Downloaded source {spec.name} exceeds maximum size; previous snapshot preserved"
+                    )
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Could not download {spec.name} from {spec.url}: {exc}. "
@@ -198,6 +221,10 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                 ) from exc
             if not bytes_written:
                 raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
+            if expected_bytes is not None and bytes_written != expected_bytes:
+                raise RuntimeError(
+                    f"Downloaded source {spec.name} Content-Length mismatch; previous snapshot preserved"
+                )
             handle.flush()
             os.fsync(handle.fileno())
         _validate_downloaded_csv(spec, temporary)
