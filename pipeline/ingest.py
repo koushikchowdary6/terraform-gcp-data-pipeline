@@ -188,9 +188,7 @@ def _iter_rows(path: Path) -> Iterator[tuple[int, dict[str, str], Sequence[str] 
                 # and accepted-row provenance point to the source location.
                 yield reader.line_num, row, header
         except csv.Error as exc:
-            raise SchemaError(
-                f"{path.name}: malformed CSV near physical line {reader.line_num}: {exc}"
-            ) from exc
+            raise SchemaError(f"{path.name}: malformed CSV near physical line {reader.line_num}: {exc}") from exc
 
 
 def ingest_file(
