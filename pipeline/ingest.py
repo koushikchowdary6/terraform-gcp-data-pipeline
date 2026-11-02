@@ -129,6 +129,16 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
         try:
             response = requests.get(spec.url, timeout=timeout, stream=True)
             response.raise_for_status()
+            # requests treats every 2xx response (and 304) as non-errors.
+            # A CSV snapshot must be a complete representation, not a
+            # partial 206 body, an accepted-but-pending 202 response, or a
+            # cache validator's bodyless 304. Never replace the last good
+            # offline snapshot with any of those responses.
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Source {spec.name} returned HTTP {response.status_code}, "
+                    "not a complete HTTP 200 CSV; previous snapshot preserved"
+                )
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Could not download {spec.name} from {spec.url}: {exc}. "
