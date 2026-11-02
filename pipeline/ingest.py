@@ -139,6 +139,26 @@ def _validate_downloaded_csv(spec: SourceSpec, path: Path) -> None:
         raise RuntimeError(f"Source {spec.name} has an invalid CSV snapshot; previous snapshot preserved") from exc
 
 
+def _identity_content_length(response, name: str) -> int | None:
+    """Validate identity HTTP framing without confusing compressed wire lengths.
+
+    requests.iter_content() returns decoded bytes when Content-Encoding is set.
+    The independent length check therefore applies only to identity bodies.
+    """
+    headers = getattr(response, "headers", {})
+    if headers.get("Content-Encoding", "").strip().lower() not in {"", "identity"}:
+        return None
+    value = headers.get("Content-Length")
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 20 or not value.isascii() or not value.isdecimal():
+        raise RuntimeError(f"Source {name} has invalid Content-Length; previous snapshot preserved")
+    length = int(value)
+    if length > MAX_SOURCE_BYTES:
+        raise RuntimeError(f"Downloaded source {name} exceeds maximum size; previous snapshot preserved")
+    return length
+
+
 def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIMEOUT_SECONDS) -> Path:
     """Stream a bounded HTTP response into an atomically published snapshot.
 
@@ -167,6 +187,7 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                     f"Source {spec.name} returned HTTP {response.status_code}, "
                     "not a complete HTTP 200 CSV; previous snapshot preserved"
                 )
+            expected_bytes = _identity_content_length(response, spec.name)
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Could not download {spec.name} from {spec.url}: {exc}. "
@@ -198,6 +219,10 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                 ) from exc
             if not bytes_written:
                 raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
+            if expected_bytes is not None and bytes_written != expected_bytes:
+                raise RuntimeError(
+                    f"Downloaded source {spec.name} Content-Length mismatch; previous snapshot preserved"
+                )
             handle.flush()
             os.fsync(handle.fileno())
         _validate_downloaded_csv(spec, temporary)
