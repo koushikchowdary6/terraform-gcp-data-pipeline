@@ -95,9 +95,7 @@ def test_http_failure_keeps_snapshot_and_does_not_create_temp(tmp_path, monkeypa
 
 @pytest.mark.parametrize("status_code", [201, 202, 204, 206, 304])
 @pytest.mark.parametrize("existing_snapshot", [True, False])
-def test_non_200_response_never_replaces_complete_csv(
-    tmp_path, monkeypatch, status_code, existing_snapshot
-):
+def test_non_200_response_never_replaces_complete_csv(tmp_path, monkeypatch, status_code, existing_snapshot):
     destination = tmp_path / VIX.raw_filename
     if existing_snapshot:
         destination.write_bytes(b"last known-good CSV")
