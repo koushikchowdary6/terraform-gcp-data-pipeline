@@ -177,12 +177,20 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
 
 def _iter_rows(path: Path) -> Iterator[tuple[int, dict[str, str], Sequence[str] | None]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        header = reader.fieldnames
-        for offset, row in enumerate(reader):
-            # Row 1 is the header, so data rows start at 2 - matching what a
-            # person sees when they open the file to investigate a reject.
-            yield offset + 2, row, header
+        # Strict parsing rejects incomplete quoted records instead of silently
+        # loading an apparently valid last row from a truncated CSV snapshot.
+        reader = csv.DictReader(handle, strict=True)
+        try:
+            header = reader.fieldnames
+            for row in reader:
+                # CSV fields may span physical lines. Report the line where
+                # the record ends, not the logical record index, so rejects
+                # and accepted-row provenance point to the source location.
+                yield reader.line_num, row, header
+        except csv.Error as exc:
+            raise SchemaError(
+                f"{path.name}: malformed CSV near physical line {reader.line_num}: {exc}"
+            ) from exc
 
 
 def ingest_file(
