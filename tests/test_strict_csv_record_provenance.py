@@ -29,7 +29,7 @@ def test_truncated_quoted_csv_fails_closed(tmp_path: Path, payload: str):
 def test_multiline_quoted_optional_column_uses_physical_line_number(tmp_path: Path):
     path = tmp_path / "source.csv"
     path.write_text(
-        'DATE,OPEN,HIGH,LOW,CLOSE,NOTES\n'
+        "DATE,OPEN,HIGH,LOW,CLOSE,NOTES\n"
         '1990-01-02,17,18,16,17.24,"quoted first line\n'
         'second line"\n'
         '1990-01-03,18,19,17,18.25,"normal"\n',
