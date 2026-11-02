@@ -111,6 +111,34 @@ def new_batch_id() -> str:
     return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
+def _validate_downloaded_csv(spec: SourceSpec, path: Path) -> None:
+    """Check structural completeness before replacing the last-good CSV.
+
+    Ingest-time validation still handles bad dates and metric cells as
+    rejects. This boundary rejects wrong feeds, malformed CSV framing,
+    and empty snapshots before they become the offline recovery source.
+    """
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.reader(handle, strict=True)
+            header = next(reader, None)
+            validate_header(spec, header)
+            rows = 0
+            for row in reader:
+                if not row:
+                    continue
+                if len(row) != len(header):
+                    raise SchemaError(
+                        f"{spec.name}: CSV record at line {reader.line_num} "
+                        "has a different number of fields than its header"
+                    )
+                rows += 1
+            if rows == 0:
+                raise SchemaError(f"{spec.name}: downloaded CSV contains no data records")
+    except (UnicodeDecodeError, csv.Error, SchemaError) as exc:
+        raise RuntimeError(f"Source {spec.name} has an invalid CSV snapshot; previous snapshot preserved") from exc
+
+
 def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIMEOUT_SECONDS) -> Path:
     """Stream a bounded HTTP response into an atomically published snapshot.
 
@@ -172,6 +200,7 @@ def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIM
                 raise RuntimeError(f"Downloaded source {spec.name} is empty; previous snapshot preserved")
             handle.flush()
             os.fsync(handle.fileno())
+        _validate_downloaded_csv(spec, temporary)
         os.replace(temporary, destination)
     finally:
         if response is not None:
