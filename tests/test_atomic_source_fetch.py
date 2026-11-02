@@ -8,9 +8,11 @@ import requests
 from pipeline import ingest
 from pipeline.sources import VIX
 
+VALID_VIX_CSV = b"DATE,OPEN,HIGH,LOW,CLOSE\n1990-01-02,17,18,16,17.24\n"
+
 
 class FakeResponse:
-    def __init__(self, content=b"new verified CSV", *, failure=None, chunks=None, status_code=200):
+    def __init__(self, content=VALID_VIX_CSV, *, failure=None, chunks=None, status_code=200):
         self.status_code = status_code
         self.chunks = chunks if chunks is not None else [content]
         self.failure = failure
@@ -52,10 +54,10 @@ def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
     destination = tmp_path / "raw" / VIX.raw_filename
     destination.parent.mkdir()
     destination.write_bytes(b"previous CSV")
-    calls = _mock_download(monkeypatch, FakeResponse(b"new CSV"))
+    calls = _mock_download(monkeypatch, FakeResponse(VALID_VIX_CSV))
 
     assert ingest.fetch_source(VIX, destination, timeout=12) == destination
-    assert destination.read_bytes() == b"new CSV"
+    assert destination.read_bytes() == VALID_VIX_CSV
     assert calls == [(VIX.url, 12, True)]
     assert list(destination.parent.iterdir()) == [destination]
 
@@ -64,7 +66,7 @@ def test_successful_fetch_atomically_replaces_snapshot(tmp_path, monkeypatch):
 def test_failed_fetch_preserves_last_good_snapshot_and_cleans_temp(tmp_path, monkeypatch, stage):
     destination = tmp_path / VIX.raw_filename
     destination.write_bytes(b"last good snapshot")
-    _mock_download(monkeypatch, FakeResponse(b"partially staged new CSV"))
+    _mock_download(monkeypatch, FakeResponse(VALID_VIX_CSV))
 
     def fail(*args):
         raise OSError(f"simulated {stage} failure")
@@ -179,12 +181,12 @@ def test_oversized_stream_stops_before_reading_remaining_chunks(tmp_path, monkey
 
 def test_exact_source_size_limit_is_accepted(tmp_path, monkeypatch):
     destination = tmp_path / VIX.raw_filename
-    monkeypatch.setattr(ingest, "MAX_SOURCE_BYTES", 8)
-    response = FakeResponse(chunks=[b"1234", b"5678"])
+    monkeypatch.setattr(ingest, "MAX_SOURCE_BYTES", len(VALID_VIX_CSV))
+    response = FakeResponse(chunks=[VALID_VIX_CSV[:8], VALID_VIX_CSV[8:]])
     _mock_download(monkeypatch, response)
 
     assert ingest.fetch_source(VIX, destination) == destination
-    assert destination.read_bytes() == b"12345678"
+    assert destination.read_bytes() == VALID_VIX_CSV
     assert response.closed
 
 
