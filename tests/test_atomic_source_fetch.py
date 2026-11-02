@@ -10,7 +10,8 @@ from pipeline.sources import VIX
 
 
 class FakeResponse:
-    def __init__(self, content=b"new verified CSV", *, failure=None, chunks=None):
+    def __init__(self, content=b"new verified CSV", *, failure=None, chunks=None, status_code=200):
+        self.status_code = status_code
         self.chunks = chunks if chunks is not None else [content]
         self.failure = failure
         self.closed = False
@@ -90,6 +91,31 @@ def test_http_failure_keeps_snapshot_and_does_not_create_temp(tmp_path, monkeypa
 
     assert destination.read_bytes() == b"previous CSV"
     assert list(tmp_path.iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("status_code", [201, 202, 204, 206, 304])
+@pytest.mark.parametrize("existing_snapshot", [True, False])
+def test_non_200_response_never_replaces_complete_csv(
+    tmp_path, monkeypatch, status_code, existing_snapshot
+):
+    destination = tmp_path / VIX.raw_filename
+    if existing_snapshot:
+        destination.write_bytes(b"last known-good CSV")
+    response = FakeResponse(
+        b"DATE,OPEN,HIGH,LOW,CLOSE\\n1990-01-02,17,18,16,17.24\\n",
+        status_code=status_code,
+    )
+    _mock_download(monkeypatch, response)
+
+    with pytest.raises(RuntimeError, match=f"HTTP {status_code}.*previous snapshot preserved"):
+        ingest.fetch_source(VIX, destination)
+
+    assert response.closed
+    if existing_snapshot:
+        assert destination.read_bytes() == b"last known-good CSV"
+    else:
+        assert not destination.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_new_destination_is_not_published_on_sync_failure(tmp_path, monkeypatch):
