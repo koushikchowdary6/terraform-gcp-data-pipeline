@@ -136,9 +136,7 @@ def _validate_downloaded_csv(spec: SourceSpec, path: Path) -> None:
             if rows == 0:
                 raise SchemaError(f"{spec.name}: downloaded CSV contains no data records")
     except (UnicodeDecodeError, csv.Error, SchemaError) as exc:
-        raise RuntimeError(
-            f"Source {spec.name} has an invalid CSV snapshot; previous snapshot preserved"
-        ) from exc
+        raise RuntimeError(f"Source {spec.name} has an invalid CSV snapshot; previous snapshot preserved") from exc
 
 
 def fetch_source(spec: SourceSpec, destination: Path, *, timeout: int = HTTP_TIMEOUT_SECONDS) -> Path:
